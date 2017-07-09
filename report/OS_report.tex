@@ -1,0 +1,371 @@
+%% OS II Project Report Latex file.
+%% Completed By Yuyang Rong(rongyy@shanghaitech.edu.cn) and 
+%% Jianxiong Cai(caijx@shanghaitech.edu.cn)
+%%
+%% To edit this file, please use indentions with tab size of 2.
+%%
+
+\documentclass[conference,compsoc]{IEEEtran}
+\usepackage{cite}
+\usepackage{listings}
+
+
+
+\begin{document}
+\title{
+	OS Course Project: Safebox\\ 
+	Software fault isolation using syscall prevention approach
+}
+
+
+% author names and affiliations
+% use a multiple column layout for up to three different
+% affiliations
+\author{
+	\IEEEauthorblockN{Yuyang Rong}
+	\IEEEauthorblockA{
+		School of Information Science and Technology \\
+		ShanghaiTech University \\
+		Student ID: 69850764 \\
+	}
+\and
+	\IEEEauthorblockN{Jianxiong Cai}
+	\IEEEauthorblockA{
+		School of Information Science and Technology \\
+		ShanghaiTech University \\
+		Student ID: 67771603 \\
+	}
+}
+
+\maketitle
+
+% As a general rule, do not put math, special symbols or citations
+% in the abstract
+\begin{abstract}
+	The grading server have to protect itself from being hacked by malicious program submitted from Internet, and protect test cases from being poached by untrusted program. 
+	To be general, a safe environment is needed for user to run untrusted program where user and his data can be safe. 
+	%TODO move it to somewhere else
+	\par
+	Currently, there are two ways to create such an environment. 
+	One is to use container or virtual machine to create a virtual environment to run the untrusted program, while the other is to track and limit the syscall made by untrusted program. 
+	There are pros and cons for both project.
+	\par
+	In this project, we implemented a sandbox for safely running untrusted program, using the second way. 
+	Besides, we developed a rust library for trace syscall of another process.
+\end{abstract}
+
+\section{Introduction}
+	\par
+		How to test a program, either for student homework or competition, is a tricky problem since the grading server have to run the program in order to grade the program under most situations. 
+		On the other hand, because the student homework or competition code is submitted from Internet, and is likely to be buggy and may damage the operating system running it. 
+		Besides that, some program may try to poke the test cases during grading and try to send it to the author.
+		\par
+		Therefore, the student homework or competition code should be considered as untrusted program. 
+		The operating system need to protect itself from being damaged and prevent the program from poking test cases.
+	\par
+		As the result, a safe environment is needed for user to run untrusted program where user and his data can be safe. 
+\section {Motivation}
+	\subsection{Tread Model}
+		\par
+			As has mentioned before, the untrusted program may perform following operations, either intentionally or accidentally to damage the system or poke test cases from grading.
+			\begin{itemize}
+				\item {Read files not owned by the current user}
+				\item {Remove files owned (or can be accessed) by the current user, but should not be removed or changed by the program, like test cases}
+				\item {Read in test cases and send it out through Internet.}
+			\end{itemize}
+		\par
+			As the result, there are a few requirements for the sandbox.
+			\begin{itemize}
+				\item {Protect files not owned by the user}
+				\item {Prevent program from removing files can be accessed by current user through file system permission checking but should not be removed, like test cases}
+				\item {Limited Internet access for the program}
+			\end{itemize}
+	\subsection{Current Solutions}
+		\subsubsection{LXD}
+			\par
+				Currently there are many mal-ware isolation applications, one of the most famous is \emph{lxd}. 
+				We dived into \emph{lxd} and realized that it's designed based on the following principles:
+			\par
+				\emph{\textbf{
+					If you can't see it, you can't destroy it. 
+					You can't tempering with things you can't see.
+				}}
+
+			\par
+				Good as this principle is, it causes unintended inconvenience. 
+				For example, Rust compiler have to check Github.com for extern crates if it is one of the dependences of the user program. 
+				But to make sure the data is safe, in \emph{lxd}, network access is either entirely banned or allowed.
+				Such situation can be really problematic.
+		\subsection{Janus sandbox}
+			\par
+				Reasearchers at U.C. Berkeley create a safe environment for running helper application by monitoring every syscall it made. It follows this principle:
+				\par
+				\emph{\textbf{
+					An application can do little harm if its access to the underlying operating system is appropriately restricted.\cite{goldberg1996secure}
+				}}
+				\par
+				The pros is that it used an approach which can individually limit access of each program.
+				However, because it is a sandbox for helper application, it did not implement network access control at that time.
+		\par
+			Thus we realized we need something better to help cope with the situation. 
+			We want network, file system, etc be available without damaging user's computer or server. 
+			That's how we started our project.
+\section {Project Contribution}
+\begin{itemize}
+	\item{Implement Janus sandbox in Rust with a few modification}
+	\item{Implement the sandbox to allow untrusted program only can connect to certain permitted IP address}
+	\item{Implement a Rust lib to trace another process, based on ptrace with Rust FFI (Foreign Function Interface)}
+\end{itemize}
+\section {Design}
+	\subsection{Principles}
+		\par
+			So we came to our solution. As we have mentioned above, the \emph{lxd} does not provide limited Internet access, instead, it either allow all Internet access or deny all. So we did not followed the principle of container / virtual machine to implement the sandbox.
+			\par
+			Instead, we followed the principle of Janus sandbox, because the assumption Janus sandbox made, as mentioned above, is quite concrete.
+			\par
+			In general, we will trace every syscall the untrusted program is issuing and decide if it's an allowance or a denial.
+	\subsection{Difficulties} 
+		\subsubsection{Enormous syscalls}
+			\par
+				Nice as tracing every syscall sounds, it's hard as soon as we realized the real scale the problem is. 
+			\par 
+				The number of syscall are enormous, far beyond our expectation. 
+				For example, in x86\_64 architecture, there are in total 332\cite{LinuxSysCall} syscalls. 
+				\par
+				Writing 332 different policies to deal with each syscall is is hard and laborious. Instead of doing that, because there are connections between some syscalls, like certain syscalls have to be performed before others, so there is a convenient way.
+				\par
+				For example, each and every program have to \emph{ open() } a file before it can \emph{read()} or \emph{write()} it. 
+				Or, \emph{ socket() } have to be established before a network connection can be possible.
+			\par
+				we decided to chock the untrusted program on those syscalls, to put pressure on where it hurts. 
+				For example, we allow \emph{ close() }, \emph{ read() } directly, but we carefully examine \emph{ open() }, whether the file is allowed, what it is opened for, etc.
+			\par 
+				In this way, we narrowed our work to much fewer syscalls like \emph{open()} and \emph{connect()}.
+		\subsubsection{Killing a process}
+			\par 
+				Not much program nowadays do not do \emph{ fork() } anymore, even students' homework use this syscall here or there. 
+				When a program \emph{ fork() }, tracing program do \emph{ fork() } too, and immediately begin to trace the child just forked by the untrusted program. 
+				After these finishes, we will start both parent and child.
+			\par
+				The problem is, when a untrusted program \emph{kill()} it's child, or one of it's children \emph{kill()} another, the tracer can't tell the difference. 
+				Tracer have no way to know the \emph{pid} about to be killed is another user program or one of one of tracee's children. 
+				Tracer program have to do inter communication to know what really happened.
+			\par
+				Doing inter communication between tracers can be rather difficult can gains little, we then came up with a new solution that we change tracee's \emph{uid}, thus every tracee's child will have the same \emph{uid} and they can feel free to \emph{kill()} each other, but once they try to \emph{kill()} anyone else, operating system will stop them.
+			\par
+				We tried to use \emph{setuid()} to directly change uid, but soon we realized that it won't work since binary and outer folder doesn't belong to the new user and thus any operation will be denied by OS. 
+				The solution we have new is to use \emph{lxd} to do it for us. \emph{lxd} will change uid and thus do our job.
+	\subsection {Alternative approaches}
+		\subsubsection{Limited file access}
+			\par
+				The first thing came into our mind that can be used for file access limitation is to write a configuration file.
+				In this file we specifically state what file is allowed and what is not.
+				This is easy to implement, but hard for users to use. 
+				After we run a few tests we realized that binaries usually need dynamic linked libraries and it's hard for user to list all of them.
+			\par 
+				Another way we considered is to directly "ask" file system to do it for us.
+				Once we changed uid of the program, it can't access because file system will not allow it.
+				However, in this way we may accidentally put too much constrain with get away.
+				For example, Cargo have to access \emph{ /home/user/.cargo } upon running, such deed may cause yet another inconvenience. 
+				However, the get away is some untrusted program that need to run under \emph{sudo}, thus file system can do nothing about it.
+			\par 	
+				Finally we decided to use \emph{lxd}(File system) and configuration file combined.
+				\emph{lxd} will limit the majority of tracee's invalid file access. 
+				For example, it prevents the tracee to access files of other user. 
+				If the file only exists on host system, the tracee can not name it in the lxd. 
+				If the file is in the container but owned by other user, the file system permission checking would deny invalid access.
+				\par
+				Configuration file is a a list where files can be removed or changed. 
+				It helps the user when the grading process needs some file to be in the lxd container, like running a web server locally to test a web application. 
+				And the untrusted program have to be run as root. 
+				Under that circumstance, the configuration file would help the user a lot.
+		\par
+		\subsubsection{Limited network access}
+	If the program to be grade is a network program which does not necessary relay on the Internet, like a web browser. One alternative way is:
+	\par
+	\begin{enumerate}
+		\item{Disable the Internet access like using a lxd container without network configuration.}
+		\item{Test the program through \emph{loopback network interface} (usually \emph{127.0.0.1})}
+	\end{enumerate}
+	\par
+	However, this approach for program requiring network access but not Internet access. If the program need Internet access to run, like a Rust program may have dependence on Rust Cargo, which is online, the grading system can not do its grading job in the approach.
+	\par
+	As the result, in our design, the sandbox give limited network access to the untrusted program by monitoring the destination ip address of every network connection.
+
+% the actual implementation part.
+\section{Implementation}
+	\subsection{ptrace}
+		\par
+			Linux provides a function:\\
+				\begin{center}
+				\emph{ptrace(request, pid, addr, data)}
+				\end{center}
+			This function can be called both by untrusted program or tracing program. 
+			In user manual, the program being traced is called \emph{Tracee}, we will call it tracee from now on.
+		\par 
+			What ptrace does is that it stops syscall and have the privilege to examine memory, registers, etc.\ the tracee is using. 
+			Every time the tracer calls this function, it will be put to wait. 
+			It will wake up on two conditions: either tracee issues an syscall then OS wakes tracer up and continue doing the syscall until tracer says so by a \emph{ptrace(CONT, pid, void, void)} call or OS finished a syscall it wakes tracer up before it hands control to tracee.
+	\subsection{Choice of architecture}
+		\par
+			ptrace may have the ability to alter registers, it don't necessarily have the ability to know the syscall the tracee is making. 
+			Different architectures store syscall number and syscall return value in different registers. 
+			For example in MIPS they are stored in \emph{\$a0} x86 \emph{\%eax}, x86\_64 \emph{\%rax}.
+		\par
+			MISP is not widely used in PC, it's mostly used in embedded processors and they don't need that much software isolation. 
+			Besides, it rather an old architecture.
+		\par 
+			We considered making a sandbox on x86, but it's an old architecture too. 
+			We totally give it up because we realized that x86\_64 can run x86 program too, so if we use x86\_64 architecture, only slight changes shall be made then sandbox can run on x86.
+		\par 
+			We decided we will use x86\_64 architecture since this is the most widely used architecture, easier for us to program when both of us are using x86\_64 architecture laptop.
+
+	\subsection{Programming language}
+
+		\par 
+			\emph{ptrace()} is a C function, so we thought let's do it in C. 
+			But after we carefully examined several programming languages we decided to use Rust.
+		\subsubsection{C}
+			\par
+				C is the first programming language came into our mind. 
+				But after we toyed a little with C and \emph{ptrace()} we realized that \emph{ptrace()} is rather a complicated function, we want to encapsulate it to make our life easier. 
+				However, C is not OOP, so we abandoned it and started to consider C++.
+		\subsubsection{C++}
+			\par
+				C++ is good at encapsulation, but too week at type system. 
+				We build this sandbox to be safe, not to introduce more volubilities. 
+				So instead of C++ we started looking Rust.
+		\subsubsection{Rust}
+			\par
+				Rust have it's pros and cons too. 
+				There is not \emph{ptrace()} implemented in Rust, we can only use this function through extern crate \emph{libc}, so we are forced to add a lot of \emph{unsafe} to our code. 
+				However, life time system and ownership system allow us to code more confidently.
+
+	\subsection{Encapsulation}
+		\par 
+			We found a finished ptrace library on crates.io, but it couldn't compile because of certain dependencies are missing. 
+			We tried to fix it, but we failed because the lacking dependencies have been removed by Rust team.
+		\par
+			So we decide to write ourselves a library to do that job. 
+			We created a structure contains a pid and other necessary components listed below:
+			\begin{verbatim}
+				pub struct Tracee {
+					  pid: libc::pid_t,
+					  allow_all: bool,
+					  entry_flag : bool,			
+					  last_syscall: u64,
+					  ip_connected: Vec<String>,
+					  file_opened: Vec<String>,
+				}
+			\end{verbatim}
+		\par
+			\emph{allow\_all} is a sign in case the user don't want any protection. 
+			\emph{entry\_flag} shows if the tracee is exiting a syscall or entering. 
+			The last two vectors are just logs used to tell tracee's behavior.
+		\par
+			We can initialize a Tracee by telling the command so that the constructor will call \emph{fork()} first and the child will call \emph{ptrace(TRACEME, pid, void, void)}, thus a program is set up and ready to go.(The program won't start until tracer says so.)
+		\par
+			We now provide interface for certain widely used functions, like \emph{take\_regs()} and \emph{do\_continue()}. 
+			These functions do not require any arguments but pid, using \emph{ptrace()} to do that can be laborious, so we finished the interface.
+	\subsection{The framework}
+		\subsubsection{Reading configuration file}
+			Currently Safebox have 2 configuration files, the IP address and file allowed to access.
+			\par
+			When the sandbox is launched, it would read in the two configuration file and stores it in vectors. After that, each time the untrusted program perform file access or network connection (not in \emph{allow all} mode), it would check if the file location / target ip address is permitted.
+		\subsubsection{Initialize the tracee}
+			\par
+				Good thing is this have been done in our own library, all we need to do is to take command from command line and put them into a vector, give that to constructor. 
+			\par
+				After construction, the tracee is halted at the first \emph{execvp()}, user have to manually start the tracee by calling \emph{tracee.do\_continue()}
+
+		\subsubsection{Tracing according to syscall}
+			\par
+				The main program goes into a loop which will not break until the tracee is stopped because it exited instead of an issue of syscall.
+				In the loop we will intercept every syscall, each twice.(In and out)
+				Now we don't do any examine on return value of a syscall so we directly allow it by saying \emph{tracee.do\_continue)()}.
+				However, if the tracee is entering a syscall, that's another story.
+				We will make decisions depend on the syscall the tracee is making.
+		\subsubsection{Allow or Deny}
+			\par
+				Currently we focus on two syscalls, \emph{open()} and \emph{connect()}
+			\par
+				In terms of \emph{open}, we only allow files inside current working directory, outside /home or specifically permitted in configuration file.
+				We believe if tracee is toying files inside current working directory, little harm can be made.
+				If tracee tries to tank files outside /home, operating system will prevent it.
+				
+		\subsection{Network}
+			\par
+				There are different ways to limit the access of certain program to network. 
+				\emph{lxd}, the Linux Containers, limit the network access by configuring the whole container, all programs in one container will either have network access or not. 
+				Taking advantage of syscall-level sandbox, every process is separate, thus monitoring one particular program's network connection is possible. 
+				Besides, by implementing in this way, the sandbox can allow the untrusted program only be able to connect to certain IP address.
+			\par
+				There are four syscall a client program would use to make a network connection. 
+			\begin{enumerate}
+			\item \emph{ socket() }
+				\par
+				get a new socket.
+			\item \emph{ connect() }
+				\par
+				connect the socket to a remote IP.
+			\item \emph{ recvfrom() / sendto() }
+				\par
+				communicating with the remote IP though the socket.
+			\end{enumerate}
+			\par 
+				Because the connect syscall is the only syscall whose arguments contain the IP address, tracing this syscall can get the IP address, then the sandbox can decide whether this connection is allowed or not. 
+			\par
+				For example, if the untrusted program is only allowed to connect to Github.com, when the sandbox found the IP address which untrusted program is trying to connect to is beyond the white list, this syscall will be rejected.
+			
+
+\section{Rust Experience}
+	After finish this project, we now have a better feeling about Rust programming language. It's pros and cons we will list our feelings here.
+	\subsection{Pros}
+		\par
+			\subsubsection{Trait system} 
+				It is really powerful, it allows us to add additional method to predefined types. 
+				When doing file path parsing, a new method need to be add to String type, Trait system allows it.
+			\subsubsection{Mutability system} 
+				In C++, variables are assumed mutable. 
+				Thus it is dangerous to return a pointer to a variable in a struct, because the user may accidentally change the variable and could easily corrupt the struct.
+				Taking advantage of Rust, all variables are assumed immutable, thus the user can't change the variable. 
+				In this way, struct can't be corrupted by buggy program.
+	\subsection{Cons}
+		\par
+			Although Rust is said to be a system programming language, it still lack certain "system" interface.
+			We have to heavily rely on \emph{libc} to do the programming and have tons of \emph{unsafe}s in it, which is not that desirable. 				
+
+\section{Limitations \& Future Work}
+	\subsection{File System}
+		\par
+			Thanks to Prof. Chen's advice, we tried to use user system in Linux to protect user's data. 
+			If the file opened doesn't belong to tracee, the system will deny it and return -1 on \emph{open()} call.
+			Now that we are hiding out safe-box inside \emph{lxd}, we would like to look for ways to create a temp user ourself and provide protection without the help of \emph{lxd}.
+	\subsection{Network}
+		\par
+			Currently, the sandbox only support untrusted program making connect as a client. 
+			If the untrusted program is a server application, the syscall it would use would use would be socket, bind, listen, and accept. 
+		\par
+			In the syscall "accept", the address of client on the other end of the connection would be provided, so it is reasonable to monitor this syscall to decide whether the connection should be allowed or not.
+	\subsection{Library}
+		\par
+			Currently we haven't publish our library \emph{tracer}, so in Cargo.toml in \emph{safe-box} we wrote path in our laptop.
+			We hope we can publish this in the future so that cargo can look it up in Github.com automatically.
+			For now, users may have to manually change the location of the library.
+
+
+\section{Availability}
+
+	Please check \emph{https://github.com/memorysafe/sandbox-grading-system} for our Safebox.
+
+\section*{Acknowledgment}
+	We would like to thank Prof. Chen for his brilliant course and his guidance for our project. He provided us with such a great opportunity to do system programming and rust programming ourselves. 
+
+\bibliographystyle{IEEEtran}
+\bibliography{OS_cite}
+
+
+% that's all folks
+\end{document}
+
+

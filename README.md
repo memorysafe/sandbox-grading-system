@@ -1,10 +1,10 @@
-### sandbox-grading-system
+## Sandbox-grading-system
 A syscall-level sandbox for grading system. This is the repo for CS230 operating system project.
 
-### safe-box
+## Safe-box
 This is the main part of the safebox, source code and reference permission configure file is in /safe-box/src
 
-## Usage
+# Usage
 - Put the program to be run into an LXD container
 - Put the sandbox and configuration file into the container
 ''' 
@@ -18,12 +18,12 @@ lxc exec myubuntu -- /bin/bash
 ./safe-box {-aa -ip} {Program name} {Program parameter}
 '''
 
-## Notice (important)
+# Notice (important)
 Because the library relaying on has not been published on Rust Cargo, user need to change the Cargo.toml in /safe-box/src manually. We hope that we can publish that on Rust Cargo as soon as possible.
 
 For more detailed usgae, please see the usage in detail, please run safebox with --help
 
-### tracer
+## tracer
 A library for trace another process. It is based of ptrace from C++, and it provides following methods for struct Tracee 
 - new(args: &Vec<String>, all: bool) -> Result<Tracee,&'static str>
 - take_pid(&self) -> pid_t
@@ -47,7 +47,9 @@ For detailed description of the above method, please
 - check source code at /tracer/src/lib.rs
 - Or, alternatively, you can check ptrace from C++
 
-### Contact
+## Contact
 If you have any question, feel free to contact:
-  Yuyang Rong     email: rongyy@shanghaitech.edu.cn
-  Jianxiong Cai   email: caijx@shanghaitech.edu.cn
+- Yuyang Rong
+    + email: rongyy@shanghaitech.edu.cn
+- Jianxiong Cai
+    + email: caijx@shanghaitech.edu.cn

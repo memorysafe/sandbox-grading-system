@@ -23,7 +23,7 @@ Because the library relaying on has not been published on Rust Cargo, user need 
 
 For more detailed usgae, please see the usage in detail, please run safebox with --help
 
-# tracer
+# Tracer
 A library for trace another process. It is based of ptrace from C++, and it provides following methods for struct Tracee 
 - new(args: &Vec<String>, all: bool) -> Result<Tracee,&'static str>
 - take_pid(&self) -> pid_t
